@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 from datetime import timedelta, datetime
 import sys
 import traceback
-import signal
+import json
 import gc
 import cProfile
 from Ingest import appcompat_parsed
@@ -38,6 +38,7 @@ from Ingest import appcompat_redline
 from Ingest import appcompat_raw_hive
 from Ingest import appcompat_miracquisition
 from Ingest import amcache_raw_hive
+from Ingest import appcompat_hxregistryaudit
 try:
     import pyregf
 except ImportError:
@@ -54,7 +55,8 @@ supported_ingest_plugins = ['appcompat_parsed.Appcompat_parsed', 'amcache_miracq
                             'appcompat_mirregistryaudit.Appcompat_mirregistryaudit', 'amcache_mirlua_v1.Amcache_mirlua_v1',
                             'appcompat_mirlua_v2.Appcompat_mirlua_v2', 'appcompat_csv.Appcompat_csv',
                             'appcompat_redline.Appcompat_redline', 'appcompat_raw_hive.Appcompat_Raw_hive',
-                            'appcompat_miracquisition.Appcompat_miracquisition', 'amcache_raw_hive.Amcache_Raw_hive']
+                            'appcompat_miracquisition.Appcompat_miracquisition', 'amcache_raw_hive.Amcache_Raw_hive',
+                            'appcompat_hxregistryaudit.Appcompat_hxregistryaudit']
 
 # Load IngestTypes
 ingest_plugins = {}
@@ -376,9 +378,25 @@ def GetIDForHosts(fileFullPathList, DB):
     return hostsProcess
 
 
+def identify_payload_filename_from_hx_manifest(filename):
+    payloadname = None
+
+    manifest = loadFile(filename)
+    arrData = json.load(manifest)
+    for audit in arrData['audits']:
+        if audit['generator'] == "registry-api":
+            for item in audit['results']:
+                if item['type'] == "application/xml":
+                    payloadname = item['payload']
+    if payloadname:
+        return os.path.join(os.path.dirname(filename), payloadname)
+    else: logger.error("Could not identify payload file name from HX manifest")
+
+
 def processArchives(filename, file_filter):
     # Process zip file if required and return a list of files to process
     files_to_process = []
+    hx_acquisition_zip = False
 
     if filename.endswith('.zip'):
         try:
@@ -392,6 +410,10 @@ def processArchives(filename, file_filter):
             logger.info("Hold on while we check the zipped files...")
 
             for zipped_filename in zipFileList:
+                if zipped_filename.endswith('manifest.json'):
+                    files_to_process.append(identify_payload_filename_from_hx_manifest(os.path.join(zip_archive_filename, zipped_filename)))
+                    hx_acquisition_zip = True
+                    break
                 if re.match(file_filter, zipped_filename):
                     files_to_process.append(os.path.join(zip_archive_filename, zipped_filename))
             if len(files_to_process) == 0:
