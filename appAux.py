@@ -54,8 +54,6 @@ def checkLock(filefullpath):
 
 def loadFile(fileFullPath):
     """Abstracts loading a regular file and a file from within a zip archive.
-    Note that this is convenient but extremely inefficient as we're parsing the zip header for each file we pull from the zip!
-
     Args:
         fileFullPath (str): Full path to file to load
 
