@@ -6,6 +6,7 @@ import sys
 reload(sys)
 sys.setdefaultencoding("utf-8")
 import os
+import ntpath
 import argparse
 from contextlib import closing
 import multiprocessing
@@ -23,7 +24,7 @@ import math
 try:
     from test.auxTest import build_fake_DB
 except ImportError:
-    print("Missing tests")
+    print("Missing tests folder or python faker module (won't be able to run unit tests)")
     pass
 
 try:
@@ -63,19 +64,30 @@ __description__ = 'AppCompatProcessor (Beta ' + settings.__version__ + ' [' + se
 
 def ReconScan(DB, options):
     # Set Recon field in Entries for all recon commands in database
+    syntaxError = False
     conn = DB.appConnectDB()
     logger.info("Scanning for recon activity")
-    with open(os.path.join(os.path.dirname(__file__), "reconFiles.txt")) as f:
-        reconTerms = f.read().splitlines()
-    reconTerms = ','.join('"{0}"'.format(w) for w in reconTerms)
 
-    # Extremely weird query but it's way faster than a traditional approach
-    # This 0-zero's out everything and sets to 1 recon entries.
-    # X15 times faster for very big lists of reconTerm, unfortunately no progessbar possible :(
-    DB.ExecuteSpinner("UPDATE Entries SET Recon = (SELECT count(FileName) FROM Entries E2 \
-        WHERE Entries.RowID = E2.RowID and Entries.FileName IN (%s) ) > 0" % reconTerms)
+    # Find reconFiles.txt
+    recon_file = os.path.join(os.path.dirname(__file__), 'reconFiles.txt')
+    if not os.path.isfile(recon_file):
+        recon_file = '/etc/AppCompatProcessor/reconFiles.txt'
+        if not os.path.isfile(recon_file):
+            logger.error("Sorry, can't find know bad file: %s" % recon_file)
+            syntaxError = True
 
-    logger.info("Total number of potential recon commands detected: %d" % DB.CountReconEntries())
+    if not syntaxError:
+        with open(recon_file) as f:
+            reconTerms = f.read().splitlines()
+        reconTerms = ','.join('"{0}"'.format(w) for w in reconTerms)
+
+        # Extremely weird query but it's way faster than a traditional approach
+        # This 0-zero's out everything and sets to 1 recon entries.
+        # X15 times faster for very big lists of reconTerm, unfortunately no progessbar possible :(
+        DB.ExecuteSpinner("UPDATE Entries SET Recon = (SELECT count(FileName) FROM Entries E2 \
+            WHERE Entries.RowID = E2.RowID and Entries.FileName IN (%s) ) > 0" % reconTerms)
+
+        logger.info("Total number of potential recon commands detected: %d" % DB.CountReconEntries())
 
 
 def ReconTally(DB, options):
@@ -696,7 +708,7 @@ def appTstomp(DB, options):
     ret = []
     num_hits = 0
     # todo: Add whitelist: C:\Windows\splwow64.exe
-    tsCopyCatCandidates = "'kernel32.dll', 'svchost.exe', 'ntdll.dll', 'shlwapi.dll', 'shell32.dll', 'msiexec.exe'"
+    tsCopyCatCandidates = "'kernel32.dll', 'svchost.exe', 'ntdll.dll', 'shlwapi.dll', 'shell32.dll', 'msiexec.exe', 'user.exe'"
     # Find correlations by LastModified between tsCopyCatCandidates in System32 and files that are not in System32 or SysWOW64
     # Process AppCompatCache
     if DB.CountConditional("Entries", ["EntryType"], [settings.__APPCOMPAT__]) > 0:
@@ -991,17 +1003,18 @@ def appHashSearch(DB, options):
             for item in cryo_data:
                 sha1 = item[0]
                 cryo_tags = item[1]
-                print "\n\nHits for [%s - %s]:" % (sha1, cryo_tags)
                 try:
                     data = DB.Query("Select HostName, FirstRun, FilePath||'\\'||FileName, SHA1 FROM Entries_FilePaths \
                                         INNER JOIN Hosts ON Entries_FilePaths.hostID = Hosts.hostID WHERE SHA1 = '%s'" % (sha1))
                 except Exception as e:
                     traceback.print_exc(file=sys.stdout)
                 results = []
-                results.append(('cyan', "HostName,FirstRun,FilePath,FileName,SHA1".split(',')))
-                for row in data:
-                    results.append(('white', row))
-                outputcolum(results)
+                if data:
+                    print "\n\nHits for [%s - %s]:" % (sha1, cryo_tags)
+                    results.append(('cyan', "HostName,FirstRun,FilePath,FileName,SHA1".split(',')))
+                    for row in data:
+                        results.append(('white', row))
+                    outputcolum(results)
 
                 # Update progress
                 progressCurrent += 1
@@ -1162,7 +1175,7 @@ def main(args):
     dumpParser = subparsers.add_parser('dump', help='Recreate AppCompat/AmCache dump for a given host')
     dumpParser.add_argument('host_name', type=str, help='hostname to dump')
     searchParser = subparsers.add_parser('search', help='Search module')
-    searchParser.add_argument('knownbad_file', nargs='?', default=os.path.join(os.path.dirname(__file__),"AppCompatSearch.txt"), help='file with known bad regular expressions, defaults to AppCompatSearch.txt delivered with the tool')
+    searchParser.add_argument('knownbad_file', nargs='?', help='file with known bad regular expressions, defaults to AppCompatSearch.txt delivered with the tool')
     searchParser.add_argument('-f', action='store', dest="searchRegex", nargs=1, help='regex search')
     searchParser.add_argument('-F', action='store', dest="searchLiteral", nargs=1, help='literal search')
     fsearchParser = subparsers.add_parser('fsearch', help='Field search module')
@@ -1231,7 +1244,6 @@ def main(args):
         return
     elif len(args) > 1:
         # Init DB if required
-        # dbfilenameFullPath = os.path.join(os.getcwd(), options.database_file)
         dbfilenameFullPath = options.database_file
         DB = appDB.DBClass(dbfilenameFullPath, (True if options.module_name == 'load' else False), settings.__version__)
         if DB.appInitDB():
@@ -1273,6 +1285,24 @@ def main(args):
                     syntaxError = True
                 if options.module_name == "search":
                     search_space = "(FilePath || '\\' || FileName)"
+
+                    # Check if a search pattern was provided
+                    if not options.searchLiteral and not options.searchRegex:
+                        # Check if the user provided a known_bad file to use
+                        # default=os.path.join(os.path.dirname(__file__),"AppCompatSearch.txt")
+                        if not options.knownbad_file:
+                            # We first try to set the file to the same folder ACP is running from
+                            options.knownbad_file = os.path.join(os.path.dirname(__file__), 'AppCompatSearch.txt')
+                            if not os.path.isfile(options.knownbad_file):
+                                options.knownbad_file = '/etc/AppCompatProcessor/AppCompatSearch.txt'
+                                if not os.path.isfile(options.knownbad_file):
+                                    logger.error("Sorry, can't find know bad file: %s" % options.knownbad_file)
+                                    syntaxError = True
+                        else:
+                            # We check if the user provided known bad file exists
+                            if not os.path.isfile(options.knownbad_file):
+                                logger.error("Sorry, can't find know bad file: %s" % options.knownbad_file)
+
                 else:
                     if options.searchRegex and options.searchRegex[0] in ['>','<']:
                         logger.error("</> search term modifiers make no sense in a REGEX search")
@@ -1291,6 +1321,11 @@ def main(args):
                     else:
                         # Setup SearchSpace
                         search_space = options.field_name
+
+                    # Check if we have an index on it and create it if we don't
+                    # todo: Discriminate on what table we need to create the index (will fail for non-entries fields like FilePath)
+                    # index_name = 'index_Entries'+str.lower(options.field_name)
+                    # DB.appRequireIndexesDB(index_name, "CREATE INDEX "+index_name+" on Entries("+options.field_name+")", quiet=False)
 
                 if not syntaxError:
                     if(options.searchRegex is not None and options.searchLiteral is not None):
