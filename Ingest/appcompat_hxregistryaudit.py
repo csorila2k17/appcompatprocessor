@@ -77,6 +77,8 @@ class Appcompat_hxregistryaudit(Ingest):
 
     def processFile(self, file_fullpath, hostID, instanceID, rowsData):
         # Returns data in rowsData
+        minSQLiteDTS = datetime(1, 1, 1, 0, 0, 0)
+        maxSQLiteDTS = datetime(9999, 12, 31, 0, 0, 0)
         rowNumber = 0
         # Process file using ShimCacheParser
         try:
@@ -102,9 +104,25 @@ class Appcompat_hxregistryaudit(Ingest):
                 logger.debug("NULL byte found, skipping bad shimcache parse: %s" % r)
                 continue
             m = appCompatREGEX.match(r)
+
+            # Convert timestamps from unicode to datetime:
+            tmp_LastModified = unicode(m.group(1))
+            tmp_LastUpdate = unicode(m.group(2))
+            try:
+                if tmp_LastModified != 'N/A':
+                    tmp_LastModified = datetime.strptime(tmp_LastModified, "%Y-%m-%d %H:%M:%S")
+                else:
+                    tmp_LastModified = minSQLiteDTS
+                if tmp_LastUpdate != 'N/A':
+                    tmp_LastUpdate = datetime.strptime(tmp_LastUpdate, "%Y-%m-%d %H:%M:%S")
+                else:
+                    tmp_LastUpdate = minSQLiteDTS
+            except Exception as e:
+                logger.warning("[%s] Failed to parse XML for: %s [%s]" % (self.ingest_type, file_fullpath, e.message))
+
             if m:
                 namedrow = settings.EntriesFields(HostID=hostID, EntryType=settings.__APPCOMPAT__, RowNumber=rowNumber,
-                                                  LastModified=unicode(m.group(1)), LastUpdate=unicode(m.group(2)),
+                                                  LastModified=tmp_LastModified, LastUpdate=tmp_LastUpdate,
                                                   FilePath=unicode(m.group(3)),
                                                   FileName=unicode(m.group(4)), Size=unicode(m.group(5)),
                                                   ExecFlag=str(m.group(6)), InstanceID=instanceID)
