@@ -198,7 +198,7 @@ class appLoadProd(MPEngineWorker):
             except Exception as e:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                self.logger.warning("Exception processing row (%s): %s [%s / %s / %s]" % (e.message, x, exc_type, fname, exc_tb.tb_lineno))
+                self.logger.warning("Exception processing row on appLoad (%s): %s [%s / %s / %s]" % (e.message, x, exc_type, fname, exc_tb.tb_lineno))
 
                 # Skip row:
                 rowsData.remove(x)
@@ -368,19 +368,20 @@ def GetIDForHosts(fileFullPathList, DB):
                                    (ntpath.basename(file_name_fullpath), tmp_file_size))
                 break
             ingest_type = ingest_plugins_types_stack[0]
-            if ingest_plugins[ingest_type].matchFileNameFilter(file_name_fullpath):
-                # Check magic:
-                try:
-                    magic_check = ingest_plugins[ingest_type].checkMagic(file_name_fullpath)
-                    if isinstance(magic_check, tuple):
-                        logger.error("Report bug")
-                    else: magic_check_res = magic_check
-                    if magic_check_res:
-                        # Magic OK, go with this plugin
-                        hostName = ingest_plugins[ingest_type].getHostName(file_name_fullpath)
-                        break
-                except Exception as e:
-                    logger.exception("Error processing: %s (%s)" % (file_name_fullpath, str(e)))
+            if ingest_type != 'issues_document':
+                if ingest_plugins[ingest_type].matchFileNameFilter(file_name_fullpath):
+                    # Check magic:
+                    try:
+                        magic_check = ingest_plugins[ingest_type].checkMagic(file_name_fullpath)
+                        if isinstance(magic_check, tuple):
+                            logger.error("Report bug")
+                        else: magic_check_res = magic_check
+                        if magic_check_res:
+                            # Magic OK, go with this plugin
+                            hostName = ingest_plugins[ingest_type].getHostName(file_name_fullpath)
+                            break
+                    except Exception as e:
+                        logger.exception("Error processing: %s (%s)" % (file_name_fullpath, str(e)))
             # Emulate stack with list to minimize internal looping (place last used plugin at the top)
             ingest_plugins_types_stack.remove(ingest_type)
             ingest_plugins_types_stack.insert(len(ingest_plugins_types_stack), ingest_type)
