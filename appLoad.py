@@ -129,12 +129,6 @@ class appLoadProd(MPEngineWorker):
                             x.HostID, x.FilePath, x.LinkerTS))
 
                 if x.EntryType == settings.__APPCOMPAT__:
-                    if x.FirstRun is not None:
-                        if self._notInRange(minSQLiteDTS, maxSQLiteDTS, x.FirstRun):
-                            sanityCheckOK = False
-                            settings.logger.warning(
-                                "Weird FirstRun date, ignoring as this will kill sqlite on query: %s - %s - %s" % (
-                                x.HostID, x.FilePath, x.FirstRun))
 
                     if x.LastModified is not None:
                         if self._notInRange(minSQLiteDTS, maxSQLiteDTS, x.LastModified):
